@@ -12,9 +12,16 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     # https://github.com/wangyoucao577/go-release-action
+
+    - name: Set version variable
+      run: echo "PROGRAM_VERSION="$(git describe --always --long --dirty) >> ${GITHUB_ENV}
+
+    - name: Set release variable
+      run: echo "PROGRAM_RELEASE="$(git describe --tags --abbrev=0) >> ${GITHUB_ENV}
+
     - uses: wangyoucao577/go-release-action@v1
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         goos: linux
         goarch: amd64
-        ldflags: '-ldflags="-X main.version=$(git describe --always --long --dirty) -X main.release=$(git describe --tags --abbrev=0)"'
+        ldflags: -ldflags="-X main.version=${{ env.PROGRAM_VERSION }} -X main.release=${{ env.PROGRAM_RELEASE }}"
