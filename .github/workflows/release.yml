@@ -17,3 +17,4 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         goos: linux
         goarch: amd64
+        ldflags: '-ldflags="-X main.version=$(git describe --always --long --dirty) -X main.release=$(git describe --tags --abbrev=0)"'

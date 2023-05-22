@@ -39,6 +39,7 @@ import (
 // Replaced with:
 //   -ldflags="-X main.version=$(git describe --always --long --dirty)"
 var version string = "undefined"
+var release string = "undefined"
 var shouldDebug bool = false
 var log *logrus.Logger
 
@@ -239,7 +240,7 @@ func main() {
 		Level: logrus.DebugLevel,
 	}
 
-	if shouldDebug { logMain.Printf("version = %v\n", version) }
+	if shouldDebug { logMain.Printf("version = %v\nrelease = %v\n", version, release) }
 
 	ctx, cancel := context.WithTimeout(context.TODO(), 2*time.Minute)
 	defer cancel()
