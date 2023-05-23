@@ -24,4 +24,4 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         goos: linux
         goarch: amd64
-        ldflags: -ldflags="-X main.version=${{ env.PROGRAM_VERSION }} -X main.release=${{ env.PROGRAM_RELEASE }}"
+        ldflags: "-X main.version=${{ env.PROGRAM_VERSION }} -X main.release=${{ env.PROGRAM_RELEASE }}"
