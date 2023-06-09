@@ -88,7 +88,7 @@ func fetchUserDetails(bxSession *bxsession.Session, generation int) (*User, erro
 	return &user, nil
 }
 
-func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.IBMPISession, string, error) {
+func createPiSession (ptrApiKey *string, ptrServiceName *string, ptrServiceGUID *string) (*ibmpisession.IBMPISession, string, error) {
 
 	var bxSession *bxsession.Session
 	var tokenProviderEndpoint string = "https://iam.cloud.ibm.com"
@@ -144,15 +144,20 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 
 	var serviceGuid string = ""
 
-	for _, svc := range svcs {
-		log.Printf("Guid = %v\n", svc.Guid)
-		log.Printf("RegionID = %v\n", svc.RegionID)
-		log.Printf("Name = %v\n", svc.Name)
-		log.Printf("Crn = %v\n", svc.Crn)
-		if svc.Name == *ptrServiceName {
-			serviceGuid = svc.Guid
-			break
+	if *ptrServiceName != "" {
+		for _, svc := range svcs {
+			log.Printf("Guid = %v\n", svc.Guid)
+			log.Printf("RegionID = %v\n", svc.RegionID)
+			log.Printf("Name = %v\n", svc.Name)
+			log.Printf("Crn = %v\n", svc.Crn)
+			if svc.Name == *ptrServiceName {
+				serviceGuid = svc.Guid
+				break
+			}
 		}
+	}
+	if *ptrServiceGUID != "" {
+		serviceGuid = *ptrServiceGUID
 	}
 	if serviceGuid == "" {
 		return nil, "", fmt.Errorf("%s not found in list of service instances!\n", *ptrServiceName)
@@ -202,20 +207,24 @@ func main() {
 
 	var ptrApiKey *string
 	var ptrServiceName *string
+	var ptrServiceGUID *string
 	var ptrShouldDebug *string
 
 	ptrApiKey = flag.String("apiKey", "", "Your IBM Cloud API key")
 	ptrServiceName = flag.String("serviceName", "", "The cloud service to use")
+	ptrServiceGUID = flag.String("serviceGUID", "", "The cloud service to use")
 	ptrShouldDebug = flag.String("shouldDebug", "false", "Should output debug output")
 
 	flag.Parse()
 
 	if *ptrApiKey == "" {
-		logMain.Fatal("Error: No API key set, use --apiKey")
+		logMain.Fatal("Error: No API key set, use -apiKey")
 	}
 
-	if *ptrServiceName == "" {
-		logMain.Fatal("Error: No cloud service set, use --serviceName")
+	if *ptrServiceName == "" && *ptrServiceGUID == "" {
+		logMain.Fatal("Error: No cloud service set, use -serviceName or -serviceGUID")
+	} else if *ptrServiceName != "" && *ptrServiceGUID != "" {
+		logMain.Fatal("Error: Do not use both -serviceName and -serviceGUID together")
 	}
 
 	switch strings.ToLower(*ptrShouldDebug) {
@@ -249,7 +258,7 @@ func main() {
 	var serviceGuid string
 	var err error
 
-	piSession, serviceGuid, err = createPiSession(ptrApiKey, ptrServiceName)
+	piSession, serviceGuid, err = createPiSession(ptrApiKey, ptrServiceName, ptrServiceGUID)
 	if err != nil {
 		logMain.Fatal("Error createPiSession: %v\n", err)
 	}
