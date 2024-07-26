@@ -20,13 +20,13 @@ import (
 	"fmt"
 	"github.com/golang-jwt/jwt"
 	"github.com/IBM-Cloud/bluemix-go"
-	"github.com/IBM-Cloud/bluemix-go/api/resource/resourcev2/controllerv2"
 	"github.com/IBM-Cloud/bluemix-go/authentication"
 	"github.com/IBM-Cloud/bluemix-go/http"
 	"github.com/IBM-Cloud/bluemix-go/rest"
 	bxsession "github.com/IBM-Cloud/bluemix-go/session"
 	"github.com/IBM-Cloud/power-go-client/clients/instance"
 	"github.com/IBM-Cloud/power-go-client/ibmpisession"
+	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/sirupsen/logrus"
 	"io"
@@ -38,10 +38,17 @@ import (
 
 // Replaced with:
 //   -ldflags="-X main.version=$(git describe --always --long --dirty)"
-var version string = "undefined"
-var release string = "undefined"
-var shouldDebug bool = false
-var log *logrus.Logger
+var (
+	version string = "undefined"
+	release string = "undefined"
+	shouldDebug bool = false
+	log *logrus.Logger
+)
+
+const (
+	// resource ID for Power Systems Virtual Server in the Global catalog.
+	virtualServerResourceID = "f165dd34-3a40-423b-9d95-e90a23f724dd"
+)
 
 type User struct {
 	ID         string
@@ -53,9 +60,11 @@ type User struct {
 }
 
 func fetchUserDetails(bxSession *bxsession.Session, generation int) (*User, error) {
+
+	var bluemixToken string
+
 	config := bxSession.Config
 	user := User{}
-	var bluemixToken string
 
 	if strings.HasPrefix(config.IAMAccessToken, "Bearer") {
 		bluemixToken = config.IAMAccessToken[7:len(config.IAMAccessToken)]
@@ -83,8 +92,8 @@ func fetchUserDetails(bxSession *bxsession.Session, generation int) (*User, erro
 		user.cloudName = "staging"
 	}
 	user.cloudType = "public"
-
 	user.generation = generation
+
 	return &user, nil
 }
 
@@ -93,6 +102,7 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string, ptrServiceGUID 
 	var bxSession *bxsession.Session
 	var tokenProviderEndpoint string = "https://iam.cloud.ibm.com"
 	var err error
+	var controllerSvc *resourcecontrollerv2.ResourceControllerV2
 
 	bxSession, err = bxsession.New(&bluemix.Config{
 		BluemixAPIKey:         *ptrApiKey,
@@ -123,53 +133,6 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string, ptrServiceGUID 
 		return nil, "", fmt.Errorf("Error fetchUserDetails: %v", err)
 	}
 
-	ctrlv2, err := controllerv2.New(bxSession)
-	if err != nil {
-		return nil, "", fmt.Errorf("Error controllerv2.New: %v", err)
-	}
-	log.Printf("ctrlv2 = %v\n", ctrlv2)
-
-	resourceClientV2 := ctrlv2.ResourceServiceInstanceV2()
-	if err != nil {
-		return nil, "", fmt.Errorf("Error ctrlv2.ResourceServiceInstanceV2: %v", err)
-	}
-	log.Printf("resourceClientV2 = %v\n", resourceClientV2)
-
-	svcs, err := resourceClientV2.ListInstances(controllerv2.ServiceInstanceQuery{
-		Type: "service_instance",
-	})
-	if err != nil {
-		return nil, "", fmt.Errorf("Error resourceClientV2.ListInstances: %v", err)
-	}
-
-	var serviceGuid string = ""
-
-	if *ptrServiceName != "" {
-		for _, svc := range svcs {
-			log.Printf("Guid = %v\n", svc.Guid)
-			log.Printf("RegionID = %v\n", svc.RegionID)
-			log.Printf("Name = %v\n", svc.Name)
-			log.Printf("Crn = %v\n", svc.Crn)
-			if svc.Name == *ptrServiceName {
-				serviceGuid = svc.Guid
-				break
-			}
-		}
-	}
-	if *ptrServiceGUID != "" {
-		serviceGuid = *ptrServiceGUID
-	}
-	if serviceGuid == "" {
-		return nil, "", fmt.Errorf("%s not found in list of service instances!\n", *ptrServiceName)
-	}
-	log.Printf("serviceGuid = %v\n", serviceGuid)
-
-	serviceInstance, err := resourceClientV2.GetInstance(serviceGuid)
-	if err != nil {
-		return nil, "", fmt.Errorf("Error resourceClientV2.GetInstance: %v", err)
-	}
-	log.Printf("serviceInstance = %v\n", serviceInstance)
-
 	var authenticator core.Authenticator = &core.IamAuthenticator{
 		ApiKey: *ptrApiKey,
 	}
@@ -179,22 +142,133 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string, ptrServiceGUID 
 		return nil, "", fmt.Errorf("authenticator.Validate: %v", err)
 	}
 
+	// Instantiate the service with an API key based IAM authenticator
+	controllerSvc, err = resourcecontrollerv2.NewResourceControllerV2(&resourcecontrollerv2.ResourceControllerV2Options{
+		Authenticator: authenticator,
+		ServiceName:   "cloud-object-storage",
+		URL:           "https://resource-controller.cloud.ibm.com",
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("Error resourcecontrollerv2.NewResourceControllerV2: %v", err)
+	}
+
+	var (
+		serviceGuid string = ""
+		regionID    string = ""
+		listOptions *resourcecontrollerv2.ListResourceInstancesOptions
+		resources   *resourcecontrollerv2.ResourceInstancesList
+		perPage     int64 = 64
+		moreData          = true
+		nextURL     *string
+	)
+
+	listOptions = controllerSvc.NewListResourceInstancesOptions()
+//	listOptions.SetResourceGroupID(si.resourceGroupID)
+	listOptions.SetResourcePlanID(virtualServerResourceID)
+	listOptions.SetLimit(perPage)
+
+	for moreData {
+		log.Debugf("listOptions = %+v", listOptions)
+
+		resources, _, err = controllerSvc.ListResourceInstances(listOptions)
+		if err != nil {
+			log.Fatalf("Error: ListResourceInstancesWithContext returns %v", err)
+			return nil, "", err
+		}
+
+		log.Debugf("resources.RowsCount = %v", *resources.RowsCount)
+
+		for _, resource := range resources.Resources {
+			var (
+				getResourceOptions *resourcecontrollerv2.GetResourceInstanceOptions
+				resourceInstance   *resourcecontrollerv2.ResourceInstance
+				response           *core.DetailedResponse
+			)
+
+			getResourceOptions = controllerSvc.NewGetResourceInstanceOptions(*resource.ID)
+
+			resourceInstance, response, err = controllerSvc.GetResourceInstance(getResourceOptions)
+			if err != nil {
+				log.Fatalf("Error: GetResourceInstance returns %v", err)
+				return nil, "", err
+			}
+			if response != nil && response.StatusCode == gohttp.StatusNotFound {
+				log.Debugf("gohttp.StatusNotFound")
+				continue
+			} else if response != nil && response.StatusCode == gohttp.StatusInternalServerError {
+				log.Debugf("gohttp.StatusInternalServerError")
+				continue
+			}
+
+			if resourceInstance.Type == nil || resourceInstance.GUID == nil {
+				continue
+			}
+			if *resourceInstance.Type != "service_instance" && *resourceInstance.Type != "composite_instance" {
+				continue
+			}
+
+			if *ptrServiceName != "" && *resource.Name == *ptrServiceName {
+				log.Debugf("FOUNDBYNAME Name = %s", *resource.Name)
+				serviceGuid = *resource.GUID
+				regionID = *resource.RegionID
+			} else if *ptrServiceGUID != "" && *resource.GUID == *ptrServiceGUID {
+				log.Debugf("FOUNDBYGIUD Name = %s", *resource.Name)
+				serviceGuid = *resource.GUID
+				regionID = *resource.RegionID
+			} else {
+				log.Debugf("SKIP Name = %s", *resource.Name)
+			}
+		}
+
+		// Based on: https://cloud.ibm.com/apidocs/resource-controller/resource-controller?code=go#list-resource-instances
+		nextURL, err = core.GetQueryParam(resources.NextURL, "start")
+		if err != nil {
+			log.Fatalf("Error: GetQueryParam returns %v", err)
+			return nil, "", err
+		}
+		if nextURL == nil {
+			listOptions.SetStart("")
+		} else {
+			listOptions.SetStart(*nextURL)
+		}
+
+		moreData = *resources.RowsCount == perPage
+	}
+	if serviceGuid == "" {
+		if *ptrServiceName != "" {
+			return nil, "", fmt.Errorf("%s name not found in list of service instances!\n", *ptrServiceName)
+		}
+		if *ptrServiceGUID != "" {
+			return nil, "", fmt.Errorf("%s GUID not found in list of service instances!\n", *ptrServiceGUID)
+		}
+		return nil, "", fmt.Errorf("Should not be here finding list of service instances!\n")
+	}
+	log.Printf("serviceGuid = %v\n", serviceGuid)
+
+	authenticator = &core.IamAuthenticator{
+		ApiKey: *ptrApiKey,
+	}
+
+	err = authenticator.Validate()
+	if err != nil {
+		return nil, "", fmt.Errorf("authenticator.Validate: %v", err)
+	}
+
 	var piSession *ibmpisession.IBMPISession
-	var options *ibmpisession.IBMPIOptions = &ibmpisession.IBMPIOptions{
+	var ibmpiOptions *ibmpisession.IBMPIOptions = &ibmpisession.IBMPIOptions{
 		Authenticator: authenticator,
 		Debug:         false,
 		UserAccount:   user.Account,
-		Zone:          serviceInstance.RegionID,
+		Zone:          regionID,
 	}
 
-	piSession, err = ibmpisession.NewIBMPISession(options)
+	piSession, err = ibmpisession.NewIBMPISession(ibmpiOptions)
 	if err != nil {
 		return nil, "", fmt.Errorf("Error ibmpisession.New: %v", err)
 	}
 	log.Printf("piSession = %v\n", piSession)
 
 	return piSession, serviceGuid, nil
-
 }
 
 func main() {
@@ -233,7 +307,7 @@ func main() {
 	case "false":
 		shouldDebug = false
 	default:
-		logMain.Fatal("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
+		logMain.Fatalf("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
 	}
 
 	var out io.Writer
@@ -260,7 +334,7 @@ func main() {
 
 	piSession, serviceGuid, err = createPiSession(ptrApiKey, ptrServiceName, ptrServiceGUID)
 	if err != nil {
-		logMain.Fatal("Error createPiSession: %v\n", err)
+		logMain.Fatalf("Error createPiSession: %v\n", err)
 	}
 
 	systemPoolClient := instance.NewIBMPISystemPoolClient(ctx, piSession, serviceGuid)
@@ -268,7 +342,7 @@ func main() {
 
 	systemPools, err := systemPoolClient.GetSystemPools()
 	if err != nil {
-		logMain.Fatal("Error systemPoolClient.GetSystemPools: %v\n", err)
+		logMain.Fatalf("Error systemPoolClient.GetSystemPools: %v\n", err)
 	}
 	if shouldDebug { logMain.Printf("systemPools = %v\n", systemPools) }
 
