@@ -512,12 +512,14 @@ func main() {
 		// https://github.com/IBM-Cloud/power-go-client/blob/master/power/models/system.go#L20
 		// https://github.com/IBM-Cloud/power-go-client/blob/master/power/models/system_pool.go#L20
 
-		_, foundType := supportedTypes[systemPool.Type]
-		if foundType {
-			if shouldDebug { logMain.Printf("found type = %v, continuing", systemPool.Type) }
-		} else {
-			if shouldDebug { logMain.Printf("didn't find type = %v, skipping!", systemPool.Type) }
-			continue
+		if len(supportedTypes) > 0 {
+			_, foundType := supportedTypes[systemPool.Type]
+			if foundType {
+				if shouldDebug { logMain.Printf("found type = %v, continuing", systemPool.Type) }
+			} else {
+				if shouldDebug { logMain.Printf("didn't find type = %v, skipping!", systemPool.Type) }
+				continue
+			}
 		}
 
 		// Helpful debug statement to save typing
