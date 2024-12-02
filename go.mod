@@ -6,9 +6,10 @@ require (
 	github.com/IBM-Cloud/bluemix-go v0.0.0-20241117121028-a3be206688b3
 	github.com/IBM-Cloud/power-go-client v1.8.3
 	github.com/IBM/go-sdk-core/v5 v5.18.1
-	github.com/IBM/platform-services-go-sdk v0.71.1
+	github.com/IBM/platform-services-go-sdk v0.72.0
 	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/sirupsen/logrus v1.9.3
+	k8s.io/utils v0.0.0-20241104163129-6fe5fd82f078
 )
 
 require (

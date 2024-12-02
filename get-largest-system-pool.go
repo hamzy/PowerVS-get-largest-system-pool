@@ -30,6 +30,7 @@ import (
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/sirupsen/logrus"
 	"io"
+	"k8s.io/utils/ptr"
 	"os"
 	gohttp "net/http"
 	"regexp"
@@ -473,6 +474,10 @@ func main() {
 	if *ptrLimitTypes == "" {
 		supportedTypes = make(map[string]string)
 	} else {
+		if *ptrLimitTypes == "release-master" {
+			ptrLimitTypes = ptr.To("master")
+		}
+
 		if *ptrZone == "" {
 			fmt.Println("Error: No zone set, use -zone")
 			os.Exit(1)
